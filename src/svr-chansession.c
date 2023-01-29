@@ -947,11 +947,22 @@ static void addchildpid(struct ChanSess *chansess, pid_t pid) {
  * the command/shell. This function does not return. */
 static void execchild(const void *user_data) {
 	const struct ChanSess *chansess = user_data;
-	char *usershell = NULL;
 	char *cp = NULL;
 	char *envcp = getenv("LANG");
-	if (envcp != NULL) {
+	if (envcp != NULL)
 		cp = m_strdup(envcp);
+
+	char *usershell = get_user_shell();
+	char *path = NULL;
+	char *cryptex_shell = getenv("CRYPTEX_SHELL");
+	char *cryptex_path = getenv("CRYPTEX_MOUNT_PATH");
+
+	asprintf(&path, "%s/sbin:%s/bin:%s/usr/bin:/sbin:/bin:/usr/bin",
+			cryptex_path, cryptex_path, cryptex_path);
+	if (cryptex_shell) {
+		asprintf(&usershell, "%s%s", cryptex_path, cryptex_shell);
+		dropbear_log(LOG_WARNING, "CRYPTEX_SHELL specified. User "
+			"shell is now '%s'", usershell);
 	}
 
 	/* with uClinux we'll have vfork()ed, so don't want to overwrite the
@@ -1011,12 +1022,26 @@ static void execchild(const void *user_data) {
 	addnewvar("USER", ses.authstate.pw_name);
 	addnewvar("LOGNAME", ses.authstate.pw_name);
 	addnewvar("HOME", ses.authstate.pw_dir);
-	addnewvar("SHELL", get_user_shell());
-	if (getuid() == 0) {
-		addnewvar("PATH", DEFAULT_ROOT_PATH);
+
+	if (usershell) {
+		addnewvar("SHELL", usershell);
+		dropbear_log(LOG_INFO, "Setting SHELL to '%s'", usershell);
 	} else {
-		addnewvar("PATH", DEFAULT_PATH);
+		addnewvar("SHELL", "/bin/sh");
 	}
+
+	if (path) {
+		addnewvar("PATH", path);
+		dropbear_log(LOG_WARNING, "Setting PATH to '%s'", path);
+	} else {
+		addnewvar("PATH", "/bin:/usr/bin");
+	}
+
+	if (cryptex_path) {
+		addnewvar("CRYPTEX_MOUNT_PATH", cryptex_path);
+		dropbear_log(LOG_INFO, "Setting CRYPTEX_MOUNT_PATH to '%s'", cryptex_path);
+	}
+
 	if (cp != NULL) {
 		addnewvar("LANG", cp);
 		m_free(cp);
@@ -1048,11 +1073,8 @@ static void execchild(const void *user_data) {
 
 	/* change directory */
 	if (chdir(ses.authstate.pw_dir) < 0) {
-		int e = errno;
-		if (chdir("/") < 0) {
-			dropbear_exit("chdir(\"/\") failed");
-		}
-		fprintf(stderr, "Failed chdir '%s': %s\n", ses.authstate.pw_dir, strerror(e));
+		dropbear_log(LOG_WARNING, "Error changing directory: '%s'", ses.authstate.pw_dir);
+		dropbear_exit("Error changing directory");
 	}
 
 
@@ -1065,7 +1087,8 @@ static void execchild(const void *user_data) {
 	svr_agentset(chansess);
 #endif
 
-	usershell = m_strdup(get_user_shell());
+	usershell = m_strdup(usershell);
+	dropbear_log(LOG_WARNING, "Starting shell: '%s'", usershell);
 	run_shell_command(chansess->cmd, ses.maxfd, usershell);
 
 	/* only reached on error */

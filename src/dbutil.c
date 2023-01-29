@@ -404,7 +404,9 @@ void run_shell_command(const char* cmd, unsigned int maxfd, char* usershell) {
 		m_close(i);
 	}
 
+	dropbear_log(LOG_INFO, "Starting usershell: '%s'", usershell);
 	execv(usershell, argv);
+	dropbear_log(LOG_WARNING, "Failed to exec '%s' due to error '%s'", usershell, strerror(errno));
 }
 
 #if DEBUG_TRACE
